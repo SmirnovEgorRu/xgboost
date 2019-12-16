@@ -28,6 +28,8 @@
 #include "../common/hist_util.h"
 #include "../common/row_set.h"
 #include "../common/column_matrix.h"
+#include "../common/threading_utils.h"
+
 
 namespace xgboost {
 namespace tree {
@@ -188,9 +190,11 @@ void QuantileHistMaker::Builder::EvaluateSplits(
     int depth,
     unsigned *timestamp,
     std::vector<ExpandEntry> *temp_qexpand_depth) {
+  this->EvaluateSplit(qexpand_depth_wise_, gmat, hist_, *p_fmat, *p_tree);
+
   for (auto const& entry : qexpand_depth_wise_) {
     int nid = entry.nid;
-    this->EvaluateSplit(nid, gmat, hist_, *p_fmat, *p_tree);
+
     if (snode_[nid].best.loss_chg < kRtEps ||
         (param_.max_depth > 0 && depth == param_.max_depth) ||
         (param_.max_leaves > 0 && (*num_leaves) == param_.max_leaves)) {
@@ -259,9 +263,11 @@ void QuantileHistMaker::Builder::ExpandWithLossGuide(
 
   this->InitNewNode(0, gmat, gpair_h, *p_fmat, *p_tree);
 
-  this->EvaluateSplit(0, gmat, hist_, *p_fmat, *p_tree);
-  qexpand_loss_guided_->push(ExpandEntry(0, p_tree->GetDepth(0),
-                                         snode_[0].best.loss_chg, timestamp++));
+  ExpandEntry node(0, p_tree->GetDepth(0), snode_[0].best.loss_chg, timestamp++);
+  this->EvaluateSplit({node}, gmat, hist_, *p_fmat, *p_tree);
+  node.loss_chg = snode_[0].best.loss_chg;
+
+  qexpand_loss_guided_->push(node);
   ++num_leaves;
 
   while (!qexpand_loss_guided_->empty()) {
@@ -301,15 +307,17 @@ void QuantileHistMaker::Builder::ExpandWithLossGuide(
                            snode_[cleft].weight, snode_[cright].weight);
       interaction_constraints_.Split(nid, featureid, cleft, cright);
 
-      this->EvaluateSplit(cleft, gmat, hist_, *p_fmat, *p_tree);
-      this->EvaluateSplit(cright, gmat, hist_, *p_fmat, *p_tree);
+      ExpandEntry left_node(cleft, p_tree->GetDepth(cleft),
+                            snode_[cleft].best.loss_chg, timestamp++);
+      ExpandEntry right_node(cright, p_tree->GetDepth(cright),
+                            snode_[cright].best.loss_chg, timestamp++);
 
-      qexpand_loss_guided_->push(ExpandEntry(cleft, p_tree->GetDepth(cleft),
-                                 snode_[cleft].best.loss_chg,
-                                 timestamp++));
-      qexpand_loss_guided_->push(ExpandEntry(cright, p_tree->GetDepth(cright),
-                                 snode_[cright].best.loss_chg,
-                                 timestamp++));
+      this->EvaluateSplit({left_node, right_node}, gmat, hist_, *p_fmat, *p_tree);
+      left_node.loss_chg = snode_[cleft].best.loss_chg;
+      right_node.loss_chg = snode_[cright].best.loss_chg;
+
+      qexpand_loss_guided_->push(left_node);
+      qexpand_loss_guided_->push(right_node);
 
       ++num_leaves;  // give two and take one, as parent is no longer a leaf
     }
@@ -554,39 +562,60 @@ void QuantileHistMaker::Builder::InitData(const GHistIndexMatrix& gmat,
   builder_monitor_.Stop("InitData");
 }
 
-void QuantileHistMaker::Builder::EvaluateSplit(const int nid,
+// nodes_set - set of nodes to be processed in parallel
+void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& nodes_set,
                                                const GHistIndexMatrix& gmat,
                                                const HistCollection& hist,
                                                const DMatrix& fmat,
                                                const RegTree& tree) {
   builder_monitor_.Start("EvaluateSplit");
-  // start enumeration
-  const MetaInfo& info = fmat.Info();
-  auto p_feature_set = column_sampler_.GetFeatureSet(tree.GetDepth(nid));
-  auto const& feature_set = p_feature_set->HostVector();
-  const auto nfeature = static_cast<bst_feature_t>(feature_set.size());
-  const auto nthread = static_cast<bst_omp_uint>(this->nthread_);
-  best_split_tloc_.resize(nthread);
-#pragma omp parallel for schedule(static) num_threads(nthread)
-  for (bst_omp_uint tid = 0; tid < nthread; ++tid) {
-    best_split_tloc_[tid] = snode_[nid].best;
-  }
-  GHistRow node_hist = hist[nid];
 
-#pragma omp parallel for schedule(dynamic) num_threads(nthread)
-  for (bst_omp_uint i = 0; i < nfeature; ++i) {  // NOLINT(*)
-    const auto feature_id = static_cast<bst_uint>(feature_set[i]);
-    const auto tid = static_cast<unsigned>(omp_get_thread_num());
-    const auto node_id = static_cast<bst_uint>(nid);
-    if (interaction_constraints_.Query(node_id, feature_id)) {
-      this->EnumerateSplit(-1, gmat, node_hist, snode_[nid], info,
-                           &best_split_tloc_[tid], feature_id, node_id);
-      this->EnumerateSplit(+1, gmat, node_hist, snode_[nid], info,
-                           &best_split_tloc_[tid], feature_id, node_id);
+  const size_t n_nodes_in_set = nodes_set.size();
+  const auto nthread = static_cast<bst_omp_uint>(this->nthread_);
+
+  using FeatureSetType = std::shared_ptr<HostDeviceVector<bst_feature_t>>;
+  std::vector<FeatureSetType> features_sets(n_nodes_in_set);
+  best_split_tloc_.resize(nthread * n_nodes_in_set);
+
+  // Generate feature set for each tree node
+  for (size_t nid_in_set = 0; nid_in_set < n_nodes_in_set; ++nid_in_set) {
+    const int32_t nid = nodes_set[nid_in_set].nid;
+    features_sets[nid_in_set] = column_sampler_.GetFeatureSet(tree.GetDepth(nid));
+
+    for (unsigned tid = 0; tid < nthread; ++tid) {
+      best_split_tloc_[nthread*nid_in_set + tid] = snode_[nid].best;
     }
   }
-  for (unsigned tid = 0; tid < nthread; ++tid) {
-    snode_[nid].best.Update(best_split_tloc_[tid]);
+
+  // Create 2D space (# of nodes to process x # of features to process)
+  // to process them in parallel
+  common::BlockedSpace2d space(n_nodes_in_set, [&](size_t fid) {
+      return features_sets[fid]->Size();
+  }, 1);
+
+  // Start parallel enumeration for all tree nodes in the set and all features
+  common::ParallelFor2d(space, [&](size_t nid_in_set, common::Range1d r) {
+    const int32_t nid = nodes_set[nid_in_set].nid;
+    const auto tid = static_cast<unsigned>(omp_get_thread_num());
+    GHistRow node_hist = hist[nid];
+
+    for (auto idx_in_feature_set = r.begin(); idx_in_feature_set < r.end(); ++idx_in_feature_set) {
+      const auto fid = features_sets[nid_in_set]->ConstHostVector()[idx_in_feature_set];
+      if (interaction_constraints_.Query(nid, fid)) {
+        this->EnumerateSplit(-1, gmat, node_hist, snode_[nid], fmat.Info(),
+                               &best_split_tloc_[nthread*nid_in_set + tid], fid, nid);
+        this->EnumerateSplit(+1, gmat, node_hist, snode_[nid], fmat.Info(),
+                             &best_split_tloc_[nthread*nid_in_set + tid], fid, nid);
+      }
+    }
+  });
+
+  // Find Best Split across threads for each node in nodes set
+  for (unsigned nid_in_set = 0; nid_in_set < n_nodes_in_set; ++nid_in_set) {
+    const int32_t nid = nodes_set[nid_in_set].nid;
+    for (unsigned tid = 0; tid < nthread; ++tid) {
+      snode_[nid].best.Update(best_split_tloc_[nthread*nid_in_set + tid]);
+    }
   }
   builder_monitor_.Stop("EvaluateSplit");
 }
@@ -830,6 +859,7 @@ void QuantileHistMaker::Builder::InitNewNode(int nid,
   }
   builder_monitor_.Stop("InitNewNode");
 }
+
 
 // enumerate the split values of specific feature
 void QuantileHistMaker::Builder::EnumerateSplit(int d_step,
