@@ -8,12 +8,12 @@
         cd python-package
         python setup.py install
         cd ..
-    ```
+        ```
     - Or download the latest available version from pip:
         ```sh
         pip install xgboost
-    ```
-    - More details are available here: [https://xgboost.readthedocs.io/en/latest/build.html]
+        ```
+    - More details are available [here](https://xgboost.readthedocs.io/en/latest/build.html)
 
 2. Resolve dependencies on other python packages. For now it has dependencies on further packages: requests, scikit-learn, pandas, numpy. You can easily download them through pip:
     ```sh
