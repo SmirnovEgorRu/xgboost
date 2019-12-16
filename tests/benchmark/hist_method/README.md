@@ -1,6 +1,6 @@
 ## How to run the benchmarks:
 1. Obtain python package of XGBoost. There are a few options:
-    1. Build XGBoost from sources manually:
+    - Build XGBoost from sources manually:
         ```sh
         git clone --recursive https://github.com/dmlc/xgboost
         cd xgboost
@@ -9,11 +9,11 @@
         python setup.py install
         cd ..
     ```
-    2. Or download the latest available version from pip:
+    - Or download the latest available version from pip:
         ```sh
-            pip install xgboost
-        ```
-    3. More details are available here: https://xgboost.readthedocs.io/en/latest/build.html
+        pip install xgboost
+    ```
+    - More details are available here: [https://xgboost.readthedocs.io/en/latest/build.html]
 
 2. Resolve dependencies on other python packages. For now it has dependencies on further packages: requests, scikit-learn, pandas, numpy. You can easily download them through pip:
     ```sh
