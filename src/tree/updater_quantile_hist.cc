@@ -831,6 +831,9 @@ bool QuantileHistMaker::Builder::UpdatePredictionCache(
   if (!p_last_fmat_ || !p_last_tree_ || data != p_last_fmat_) {
     return false;
   }
+  static double t_gl = 0;
+  double t1 = dmlc::GetTime();
+
 
   if (leaf_value_cache_.empty()) {
     leaf_value_cache_.resize(p_last_tree_->param.num_nodes,
@@ -885,6 +888,9 @@ bool QuantileHistMaker::Builder::UpdatePredictionCache(
     }
   }
 
+  double t2 = dmlc::GetTime();
+  t_gl += t2-t1;
+  printf("UpdatePredictionCache = %f\n", t_gl);
   return true;
 }
 

@@ -131,6 +131,7 @@ class QuantileHistMaker: public TreeUpdater {
 
       double global_start;
 
+
       // performance counters
       double tstart;
       double time_init_data = 0;
@@ -146,6 +147,19 @@ class QuantileHistMaker: public TreeUpdater {
       inline void EndPerfMonitor() {
         CHECK_GT(global_start, 0);
         double total_time = dmlc::GetTime() - global_start;
+
+      static double time_init_data_gl = 0;
+      static double time_init_new_node_gl = 0;
+      static double time_build_hist_gl = 0;
+      static double time_evaluate_split_gl = 0;
+      static double time_apply_split_gl = 0;
+
+        time_init_data_gl      += time_init_data;
+        time_init_new_node_gl  += time_init_new_node;
+        time_build_hist_gl     += time_build_hist;
+        time_evaluate_split_gl += time_evaluate_split;
+        time_apply_split_gl    += time_apply_split;
+
         LOG(INFO) << "\nInitData:          "
                   << std::fixed << std::setw(6) << std::setprecision(4) << time_init_data
                   << " (" << std::fixed << std::setw(5) << std::setprecision(2)
@@ -175,6 +189,12 @@ class QuantileHistMaker: public TreeUpdater {
         time_build_hist = 0;
         time_evaluate_split = 0;
         time_apply_split = 0;
+
+        printf("time_init_data_gl       = %f\n", time_init_data_gl);
+        printf("time_init_new_node_gl   = %f\n", time_init_new_node_gl);
+        printf("time_build_hist_gl      = %f\n", time_build_hist_gl);
+        printf("time_evaluate_split_gl  = %f\n", time_evaluate_split_gl);
+        printf("time_apply_split_gl     = %f\n", time_apply_split_gl);
       }
 
       inline void TickStart() {
