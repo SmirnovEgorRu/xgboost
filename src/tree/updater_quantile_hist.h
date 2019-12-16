@@ -194,7 +194,7 @@ class QuantileHistMaker: public TreeUpdater {
                   const DMatrix& fmat,
                   const RegTree& tree);
 
-    void EvaluateSplit(const int nid,
+    void EvaluateSplit(const std::vector<ExpandEntry>& nodes_set,
                        const GHistIndexMatrix& gmat,
                        const HistCollection& hist,
                        const DMatrix& fmat,
@@ -230,7 +230,8 @@ class QuantileHistMaker: public TreeUpdater {
                      const RegTree& tree);
 
     // enumerate the split values of specific feature
-    void EnumerateSplit(int d_step,
+    template<int d_step>
+    GradStats EnumerateSplit(
                         const GHistIndexMatrix& gmat,
                         const GHistRow& hist,
                         const NodeEntry& snode,
@@ -238,6 +239,12 @@ class QuantileHistMaker: public TreeUpdater {
                         SplitEntry* p_best,
                         bst_uint fid,
                         bst_uint nodeID);
+
+    // if sum of statistics for non-missing values in the node
+    // is equal to sum of statistics for all values:
+    // then - there are no missing values
+    // else - there are missing values
+    bool SplitContainsMissingValues(const GradStats e, const NodeEntry& snode);
 
     void ExpandWithDepthWise(const GHistIndexMatrix &gmat,
                              const GHistIndexBlockMatrix &gmatb,
