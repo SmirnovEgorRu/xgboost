@@ -1,7 +1,7 @@
 ## How to run the benchmarks:
 1. Obtain python package of XGBoost. There are a few options:
     1. Build XGBoost from sources manually:
-        ```bash
+        ```sh
         git clone --recursive https://github.com/dmlc/xgboost
         cd xgboost
         make -j8
@@ -10,17 +10,17 @@
         cd ..
     ```
     2. Or download the latest available version from pip:
-        ```bash
+        ```sh
             pip install xgboost
         ```
-    3. More details are available [here](https://xgboost.readthedocs.io/en/latest/build.html)
+    3. More details are available here: https://xgboost.readthedocs.io/en/latest/build.html
 
 2. Resolve dependencies on other python packages. For now it has dependencies on further packages: requests, scikit-learn, pandas, numpy. You can easily download them through pip:
-    ```bash
+    ```sh
         pip install requests scikit-learn pandas
     ```
 3. Run benchmarks with specified parameters:
-    ```bash
+    ```sh
     cd tests/benchmark/hist_method
     python xgboost_bench.py  --dataset < dataset > \
                              --hw < platform >     \
@@ -31,7 +31,7 @@
 
 The benchmark downloads required datasets from the Internet automatically, you don't need to worry about it.
 
-##Available parameters:
+## Available parameters:
 * **dataset**    - dataset to use in benchmark. Possible values: *"higgs1m", "airline-ohe", "msrank-10k"* [Required].
 * **platform**   - specify platform for computation. Possible values: *cpu, gpu*. [Default=cpu].
 * **n_iter**     - amount of boosting iterations. Possible values: *integer > 0*. [Default=1000].
