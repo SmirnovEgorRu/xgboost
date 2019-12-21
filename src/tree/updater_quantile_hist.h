@@ -230,7 +230,8 @@ class QuantileHistMaker: public TreeUpdater {
                      const RegTree& tree);
 
     // enumerate the split values of specific feature
-    void EnumerateSplit(int d_step,
+    template<int d_step>
+    GradStats EnumerateSplit(
                         const GHistIndexMatrix& gmat,
                         const GHistRow& hist,
                         const NodeEntry& snode,

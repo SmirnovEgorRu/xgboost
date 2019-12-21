@@ -562,6 +562,20 @@ void QuantileHistMaker::Builder::InitData(const GHistIndexMatrix& gmat,
   builder_monitor_.Stop("InitData");
 }
 
+// if sum of statistics for non-missing values in the node
+// is equal to sum of statistics for all values:
+// then - there are no missing values
+// else - there are missing values
+bool QuantileHistMaker::Builder::SplitContainsMissingValues(const GradStats e,
+                                                            const NodeEntry& snode) {
+  if (e.GetGrad() == snode.stats.GetGrad() && e.GetHess() == snode.stats.GetHess()) {
+    return false;
+  }
+  else {
+    return true;
+  }
+}
+
 // nodes_set - set of nodes to be processed in parallel
 void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& nodes_set,
                                                const GHistIndexMatrix& gmat,
@@ -602,10 +616,13 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
     for (auto idx_in_feature_set = r.begin(); idx_in_feature_set < r.end(); ++idx_in_feature_set) {
       const auto fid = features_sets[nid_in_set]->ConstHostVector()[idx_in_feature_set];
       if (interaction_constraints_.Query(nid, fid)) {
-        this->EnumerateSplit(-1, gmat, node_hist, snode_[nid], fmat.Info(),
+
+        auto grad_stats = this->EnumerateSplit<+1>(gmat, node_hist, snode_[nid], fmat.Info(),
                                &best_split_tloc_[nthread*nid_in_set + tid], fid, nid);
-        this->EnumerateSplit(+1, gmat, node_hist, snode_[nid], fmat.Info(),
-                             &best_split_tloc_[nthread*nid_in_set + tid], fid, nid);
+        if (SplitContainsMissingValues(grad_stats, snode_[nid])) {
+          this->EnumerateSplit<-1>(gmat, node_hist, snode_[nid], fmat.Info(),
+                               &best_split_tloc_[nthread*nid_in_set + tid], fid, nid);
+        }
       }
     }
   });
@@ -862,7 +879,8 @@ void QuantileHistMaker::Builder::InitNewNode(int nid,
 
 
 // enumerate the split values of specific feature
-void QuantileHistMaker::Builder::EnumerateSplit(int d_step,
+template<int d_step>
+GradStats QuantileHistMaker::Builder::EnumerateSplit(
                                                 const GHistIndexMatrix& gmat,
                                                 const GHistRow& hist,
                                                 const NodeEntry& snode,
@@ -934,6 +952,8 @@ void QuantileHistMaker::Builder::EnumerateSplit(int d_step,
     }
   }
   p_best->Update(best);
+
+  return e;
 }
 
 XGBOOST_REGISTER_TREE_UPDATER(FastHistMaker, "grow_fast_histmaker")
