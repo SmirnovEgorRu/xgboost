@@ -251,7 +251,7 @@ class DenseCuts  : public CutsBuilder {
 
 // FIXME(trivialfis): Merge this into generic cut builder.
 /*! \brief Builds the cut matrix on the GPU.
- *  
+ *
  *  \return The row stride across the entire dataset.
  */
 size_t DeviceSketch(int device,
@@ -354,6 +354,7 @@ class HistCollection {
  public:
   // access histogram for i-th node
   GHistRow operator[](bst_uint nid) const {
+    printf("nid, row_ptr_.size() %zu %zu\n", nid, row_ptr_.size());
     constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
     CHECK_NE(row_ptr_[nid], kMax);
     tree::GradStats* ptr =
@@ -394,6 +395,87 @@ class HistCollection {
 
   /*! \brief row_ptr_[nid] locates bin for historgram of node nid */
   std::vector<size_t> row_ptr_;
+};
+
+/*!
+ * \brief Stores temporary histograms to compute them in parallel
+ * Supports processing multiple tree-nodes for nested parallelism
+ * Able to reduce histograms across threads in efficient way
+ */
+class HistBuffer {
+ public:
+  void Init(size_t nbins) {
+    if (!is_init_) {
+      hist_.Init(nbins);
+    }
+    is_init_ = true;
+  }
+
+  // Add new elements if needed, mark all hists as unused
+  void Reset(size_t nthreads, size_t nodes) {
+    const size_t new_size = nthreads * nodes;
+    for(size_t i = max_size_; i < new_size; ++i) {
+      hist_.AddHistRow(i);
+    }
+    max_size_ = std::max(max_size_, new_size);
+
+    nodes_ = nodes;
+    nthreads_ = nthreads;
+
+    hist_was_used_.resize(nthreads * nodes);
+    std::fill(hist_was_used_.begin(), hist_was_used_.end(), false);
+  }
+
+  // Get specified hist, initilize hist by zeroes if it wasn't used before
+  GHistRow GetInitializedHist(size_t tid, size_t nid) {
+    //TODO: add checks
+    GHistRow hist = hist_[tid * nodes_ + nid];
+
+    if (!hist_was_used_[tid * nodes_ + nid]) {
+      InitilizeHist(hist);
+      hist_was_used_[tid * nodes_ + nid] = true;
+    }
+
+    return hist;
+  }
+
+  // Reduce following bins (begin, end] for nid-node in dst across threads
+  void ReduceHist(GHistRow dst, size_t nid, size_t begin, size_t end) {
+    //TODO: add checks
+    for(size_t tid = 0; tid < nthreads_; ++tid) {
+      if (hist_was_used_[tid * nodes_ + nid]) {
+        GHistRow srs = hist_[tid * nodes_ + nid];
+        //TODO: can be optimized
+        for(size_t i = begin; i < end; ++i) {
+          dst[i].Add(srs[i]);
+        }
+      }
+    }
+  }
+
+ protected:
+  // fill hist by zeroes
+  void InitilizeHist(GHistRow hist) {
+    //TODO: can be optimized
+    for(auto& val : hist) {
+      val = tree::GradStats(0.0, 0.0);
+    }
+  }
+  bool is_init_ = false;
+  /*! \brief number of threads for parallel computation */
+  size_t nthreads_ = 0;
+  /*! \brief number of nodes which will be processed in parallel  */
+  size_t nodes_ = 0;
+  /*! \brief Real size of hist_ */
+  size_t max_size_ = 0;
+  /*! \brief number of nodes which will be processed in parallel  */
+  HistCollection hist_;
+  /*!
+   * \brief Marks which hists were used, it means that they should be merged.
+   * Contains only {true or false} values
+   * but 'int' is used instead of 'bool', because std::vector<bool> isn't thread safe
+   */
+  std::vector<int> hist_was_used_;
 };
 
 /*!

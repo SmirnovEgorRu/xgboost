@@ -9,6 +9,98 @@
 namespace xgboost {
 namespace common {
 
+size_t get_n_threads() {
+  size_t nthreads;
+  #pragma omp parallel
+  {
+    #pragma omp master
+    nthreads = omp_get_num_threads();
+  }
+  return nthreads;
+}
+
+TEST(HistBuffer, Reset) {
+  constexpr size_t kBins = 10;
+  constexpr size_t kNodes = 5;
+  constexpr size_t kNodesExtended = 10;
+  constexpr size_t kTasksPerNode = 10;
+  constexpr double kValue = 1.0;
+  const size_t nthreads = get_n_threads();
+
+  HistBuffer hist_buffer;
+  hist_buffer.Init(kBins);
+  hist_buffer.Reset(nthreads, kNodes);
+
+  #pragma omp parallel for
+  for(size_t i = 0; i < kNodes * kTasksPerNode; i++) {
+    const size_t inode = i / kTasksPerNode;
+    const size_t itask = i % kTasksPerNode;
+    const size_t tid = omp_get_thread_num();
+
+    GHistRow hist = hist_buffer.GetInitializedHist(tid, inode);
+    // fill hist by some non-null values
+    for(size_t i = 0; i < kBins; ++i) {
+      hist[i].Add(kValue, kValue);
+    }
+  }
+
+  // reset and extend buffer
+  hist_buffer.Reset(nthreads, kNodesExtended);
+
+  for(size_t inode = 0; inode < kNodesExtended; inode++) {
+    for(size_t tid = 0; tid < nthreads; tid++) {
+      GHistRow hist = hist_buffer.GetInitializedHist(tid, inode);
+      // now each hist should be filled by zeros again
+      for(size_t i = 0; i < kBins; ++i) {
+        ASSERT_EQ(0.0, hist[i].GetGrad());
+        ASSERT_EQ(0.0, hist[i].GetHess());
+      }
+    }
+  }
+}
+
+TEST(HistBuffer, ReduceHist) {
+  constexpr size_t kBins = 10;
+  constexpr size_t kNodes = 5;
+  constexpr size_t kNodesExtended = 10;
+  constexpr size_t kTasksPerNode = 10;
+  constexpr double kValue = 1.0;
+  const size_t nthreads = get_n_threads();
+
+  HistBuffer hist_buffer;
+  hist_buffer.Init(kBins);
+  hist_buffer.Reset(nthreads, kNodes);
+
+  // Simple analog of BuildHist function, works in parallel for both tree-nodes and data in node
+  #pragma omp parallel for
+  for(size_t i = 0; i < kNodes * kTasksPerNode; i++) {
+    const size_t inode = i / kTasksPerNode;
+    const size_t itask = i % kTasksPerNode;
+    const size_t tid = omp_get_thread_num();
+
+    GHistRow hist = hist_buffer.GetInitializedHist(tid, inode);
+    for(size_t i = 0; i < kBins; ++i) {
+      hist[i].Add(kValue, kValue);
+    }
+  }
+
+  HistCollection collection;
+  collection.Init(kBins);
+
+  for(size_t inode = 0; inode < kNodes; inode++) {
+    collection.AddHistRow(inode);
+    hist_buffer.ReduceHist(collection[inode], inode, 0, kBins);
+
+    // We had kTasksPerNode tasks to add kValue to each bin for each node
+    // So, after reducing we expect to have (kValue * kTasksPerNode) in each node
+    for(size_t i = 0; i < kBins; ++i) {
+      ASSERT_EQ(kValue * kTasksPerNode, collection[inode][i].GetGrad());
+      ASSERT_EQ(kValue * kTasksPerNode, collection[inode][i].GetHess());
+    }
+  }
+}
+
+
 TEST(CutsBuilder, SearchGroupInd) {
   size_t constexpr kNumGroups = 4;
   size_t constexpr kRows = 17;

@@ -336,6 +336,7 @@ class QuantileHistMaker: public TreeUpdater {
     DataLayout data_layout_;
 
     common::Monitor builder_monitor_;
+    common::HistBuffer hist_buffer_;
     rabit::Reducer<GradStats, GradStats::Reduce> histred_;
   };
 

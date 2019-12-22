@@ -115,6 +115,8 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     RegTree *p_tree,
     const std::vector<GradientPair> &gpair_h) {
   builder_monitor_.Start("BuildLocalHistograms");
+
+  size_t node_count = 0;
   for (auto const& entry : qexpand_depth_wise_) {
     int nid = entry.nid;
     RegTree::Node &node = (*p_tree)[nid];
@@ -122,7 +124,10 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
       if (node.IsRoot() || node.IsLeftChild()) {
         hist_.AddHistRow(nid);
         // in distributed setting, we always calculate from left child or root node
-        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_buffer_.GetInitializedHist(0, node_count), false);
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        // node_count++;
+
         if (!node.IsRoot()) {
           nodes_for_subtraction_trick_[(*p_tree)[node.Parent()].RightChild()] = nid;
         }
@@ -134,7 +139,12 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
           (row_set_collection_[nid].Size() <
            row_set_collection_[(*p_tree)[node.Parent()].RightChild()].Size())) {
         hist_.AddHistRow(nid);
-        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_buffer_.GetInitializedHist(0, node_count), false);
+        // hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+        // node_count++;
+
         nodes_for_subtraction_trick_[(*p_tree)[node.Parent()].RightChild()] = nid;
         (*sync_count)++;
         (*starting_index) = std::min((*starting_index), nid);
@@ -142,18 +152,70 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
                  (row_set_collection_[nid].Size() <=
                   row_set_collection_[(*p_tree)[node.Parent()].LeftChild()].Size())) {
         hist_.AddHistRow(nid);
-        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_buffer_.GetInitializedHist(0, node_count), false);
+        // hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+        // node_count++;
+
         nodes_for_subtraction_trick_[(*p_tree)[node.Parent()].LeftChild()] = nid;
         (*sync_count)++;
         (*starting_index) = std::min((*starting_index), nid);
       } else if (node.IsRoot()) {
         hist_.AddHistRow(nid);
-        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        // BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_[nid], false);
+        BuildHist(gpair_h, row_set_collection_[nid], gmat, gmatb, hist_buffer_.GetInitializedHist(0, node_count), false);
+        // hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+        // node_count++;
+
+
         (*sync_count)++;
         (*starting_index) = std::min((*starting_index), nid);
       }
     }
+    node_count++;
   }
+  node_count = 0;
+  for (auto const& entry : qexpand_depth_wise_) {
+    int nid = entry.nid;
+    RegTree::Node &node = (*p_tree)[nid];
+
+    if (rabit::IsDistributed()) {
+      if (node.IsRoot() || node.IsLeftChild()) {
+        hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+      }
+    } else {
+      if (!node.IsRoot() && node.IsLeftChild() &&
+          (row_set_collection_[nid].Size() <
+           row_set_collection_[(*p_tree)[node.Parent()].RightChild()].Size())) {
+        hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+      } else if (!node.IsRoot() && !node.IsLeftChild() &&
+                 (row_set_collection_[nid].Size() <=
+                  row_set_collection_[(*p_tree)[node.Parent()].LeftChild()].Size())) {
+        hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+      } else if (node.IsRoot()) {
+        hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+      }
+    }
+
+
+   //  if (rabit::IsDistributed()) {
+   //    if (node.IsRoot() || node.IsLeftChild()) {
+
+   // } else {
+   //    if (!node.IsRoot() && node.IsLeftChild() &&
+   //        (row_set_collection_[nid].Size() <
+   //         row_set_collection_[(*p_tree)[node.Parent()].RightChild()].Size())) {
+
+   //        } else if (!node.IsRoot() && !node.IsLeftChild() &&
+   //               (row_set_collection_[nid].Size() <=
+   //                row_set_collection_[(*p_tree)[node.Parent()].LeftChild()].Size())) {
+
+    // hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
+    node_count++;
+  }
+
   builder_monitor_.Stop("BuildLocalHistograms");
 }
 
@@ -230,6 +292,9 @@ void QuantileHistMaker::Builder::ExpandWithDepthWise(
     int starting_index = std::numeric_limits<int>::max();
     int sync_count = 0;
     std::vector<ExpandEntry> temp_qexpand_depth;
+
+    hist_buffer_.Reset(this->nthread_, qexpand_depth_wise_.size());
+
     BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree, gpair_h);
     SyncHistograms(starting_index, sync_count, p_tree);
     BuildNodeStats(gmat, p_fmat, p_tree, gpair_h);
@@ -421,6 +486,7 @@ void QuantileHistMaker::Builder::InitData(const GHistIndexMatrix& gmat,
     // initialize histogram collection
     uint32_t nbins = gmat.cut.Ptrs().back();
     hist_.Init(nbins);
+    hist_buffer_.Init(nbins);
 
     // initialize histogram builder
 #pragma omp parallel
