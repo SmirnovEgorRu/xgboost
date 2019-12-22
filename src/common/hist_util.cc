@@ -676,14 +676,27 @@ void BuildHistKernel(const std::vector<GradientPair>& gpair,
   size_t no_prefetch_size = prefetch_offset + cache_line_size/sizeof(*rid);
   no_prefetch_size = no_prefetch_size > nrows ? nrows : no_prefetch_size;
 
+  const size_t prefetch_step = cache_line_size / sizeof(*index);
+
+  const size_t n_features = row_ptr[rid[0]+1] - row_ptr[rid[0]];
+
   for (size_t i = 0; i < nrows; ++i) {
+
+    const size_t icol_start_prefetch = rid[i+prefetch_offset] * n_features;
+
     const size_t icol_start = row_ptr[rid[i]];
     const size_t icol_end = row_ptr[rid[i]+1];
 
-    if (i < nrows - no_prefetch_size) {
-      PREFETCH_READ_T0(row_ptr + rid[i + prefetch_offset]);
+    // if (i < nrows - no_prefetch_size) {
+      // PREFETCH_READ_T0(row_ptr + rid[i + prefetch_offset]);
+
+      for (size_t j = icol_start_prefetch; j < icol_start_prefetch + n_features;
+          j += prefetch_step) {
+        PREFETCH_READ_T0(index + j);
+      }
+
       PREFETCH_READ_T0(pgh + 2*rid[i + prefetch_offset]);
-    }
+    // }
 
     for (size_t j = icol_start; j < icol_end; ++j) {
       const uint32_t idx_bin = 2*index[j];
@@ -694,6 +707,9 @@ void BuildHistKernel(const std::vector<GradientPair>& gpair,
     }
   }
 }
+
+
+
 
 void GHistBuilder::BuildHist(const std::vector<GradientPair>& gpair,
                              const RowSetCollection::Elem row_indices,

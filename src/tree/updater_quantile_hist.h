@@ -156,7 +156,6 @@ class QuantileHistMaker: public TreeUpdater {
                           const GHistIndexBlockMatrix& gmatb,
                           GHistRow hist,
                           bool sync_hist) {
-      builder_monitor_.Start("BuildHist");
       if (param_.enable_feature_grouping > 0) {
         hist_builder_.BuildBlockHist(gpair, row_indices, gmatb, hist);
       } else {
@@ -165,7 +164,6 @@ class QuantileHistMaker: public TreeUpdater {
       if (sync_hist) {
         this->histred_.Allreduce(hist.data(), hist_builder_.GetNumBins());
       }
-      builder_monitor_.Stop("BuildHist");
     }
 
     inline void SubtractionTrick(GHistRow self, GHistRow sibling, GHistRow parent) {
