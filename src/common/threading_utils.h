@@ -67,32 +67,51 @@ class BlockedSpace2d {
   // grain_size - max size of produced blocks
   template<typename Func>
   BlockedSpace2d(size_t dim1, Func getter_size_dim2, size_t grain_size) {
+    bounds_.resize(dim1 + 1);
+    grain_size_ = grain_size;
+    bounds_[0] = 0;
+
     for (size_t i = 0; i < dim1; ++i) {
       const size_t size = getter_size_dim2(i);
       const size_t n_blocks = size/grain_size + !!(size % grain_size);
-      for (size_t iblock = 0; iblock < n_blocks; ++iblock) {
-        const size_t begin = iblock * grain_size;
-        const size_t end   = std::min(begin + grain_size, size);
-        AddBlock(i, begin, end);
-      }
+
+      // first_dimension_.reserve(first_dimension_.size() + n_blocks);
+      // ranges_.reserve(ranges_.size() + n_blocks);
+
+      bounds_[i+1] = bounds_[i] + size;
+    //   for (size_t iblock = 0; iblock < n_blocks; ++iblock) {
+    //     const size_t begin = iblock * grain_size;
+    //     const size_t end   = std::min(begin + grain_size, size);
+    //     AddBlock(i, begin, end);
+    //   }
     }
   }
 
   // Amount of blocks(tasks) in a space
   size_t Size() const {
-    return ranges_.size();
+    return bounds_.back();
+    // return ranges_.size();
   }
 
   // get index of the first dimension of i-th block(task)
   size_t GetFirstDimension(size_t i) const {
-    CHECK_LT(i, first_dimension_.size());
-    return first_dimension_[i];
+    auto first = std::lower_bound(bounds_.begin(), bounds_.end(), i);
+    return first - bounds_.begin();
+    // CHECK_LT(i, first_dimension_.size());
+    // return first_dimension_[i];
   }
 
   // get a range of indexes for the second dimension of i-th block(task)
   Range1d GetRange(size_t i) const {
-    CHECK_LT(i, ranges_.size());
-    return ranges_[i];
+    auto first = std::lower_bound(bounds_.begin(), bounds_.end(), i);
+
+    size_t idx = (first - bounds_.begin());
+    size_t iblock = i - idx;
+    size_t begin = iblock * grain_size_;
+    return Range1d(begin, std::min(begin + grain_size_, *(first+1)));
+
+    // CHECK_LT(i, ranges_.size());
+    // return ranges_[i];
   }
 
  private:
@@ -103,6 +122,9 @@ class BlockedSpace2d {
 
   std::vector<Range1d> ranges_;
   std::vector<size_t> first_dimension_;
+  std::vector<size_t> bounds_;
+  std::vector<size_t> bounded_first_dim_;
+  size_t grain_size_;
 };
 
 
