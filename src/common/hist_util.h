@@ -354,7 +354,6 @@ class HistCollection {
  public:
   // access histogram for i-th node
   GHistRow operator[](bst_uint nid) const {
-    printf("nid, row_ptr_.size() %zu %zu\n", nid, row_ptr_.size());
     constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
     CHECK_NE(row_ptr_[nid], kMax);
     tree::GradStats* ptr =
