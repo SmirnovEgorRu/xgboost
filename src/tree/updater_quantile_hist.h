@@ -268,6 +268,7 @@ class QuantileHistMaker: public TreeUpdater {
 
     void SyncHistograms(int starting_index,
                         int sync_count,
+                        const GHistIndexMatrix &gmat,
                         RegTree *p_tree);
 
     void BuildNodeStats(const GHistIndexMatrix &gmat,

@@ -95,16 +95,40 @@ bool QuantileHistMaker::UpdatePredictionCache(
 void QuantileHistMaker::Builder::SyncHistograms(
     int starting_index,
     int sync_count,
+    const GHistIndexMatrix &gmat,
     RegTree *p_tree) {
   builder_monitor_.Start("SyncHistograms");
-  this->histred_.Allreduce(hist_[starting_index].data(), hist_builder_.GetNumBins() * sync_count);
-  // use Subtraction Trick
+
+  const bool isDistributed = rabit::IsDistributed();
   for (auto const& node : nodes_for_subtraction_trick_) {
     hist_.AddHistRow(node.nid);
-
-    SubtractionTrick(hist_[node.nid], hist_[node.sibling_nid],
-                     hist_[(*p_tree)[node.nid].Parent()]);
   }
+
+  common::BlockedSpace2d space(nodes_for_explicit_hist_build_.size(), [&](size_t node) {
+    return gmat.cut.Ptrs().back();
+  }, 512);
+
+  common::ParallelFor2d(space, [&](size_t node, common::Range1d r) {
+    const auto entry = nodes_for_explicit_hist_build_[node];
+    hist_buffer_.ReduceHist(hist_[entry.nid], node, r.begin(), r.end());
+
+    if (!(*p_tree)[entry.nid].IsRoot() && entry.sibling_nid != -1 && !isDistributed) {
+      auto parent_hist = hist_[(*p_tree)[entry.nid].Parent()];
+      for (bst_omp_uint bin_id = r.begin(); bin_id < r.end(); bin_id++) {
+        hist_[entry.sibling_nid][bin_id].SetSubstract(parent_hist[bin_id], hist_[entry.nid][bin_id]);
+      }
+    }
+  });
+
+  if (isDistributed) {
+    this->histred_.Allreduce(hist_[starting_index].data(), hist_builder_.GetNumBins() * sync_count);
+    // use Subtraction Trick
+    for (auto const& node : nodes_for_subtraction_trick_) {
+      SubtractionTrick(hist_[node.nid], hist_[node.sibling_nid],
+                       hist_[(*p_tree)[node.nid].Parent()]);
+    }
+  }
+
   builder_monitor_.Stop("SyncHistograms");
 }
 
@@ -141,13 +165,6 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
                                       nid);
     BuildHist(gpair_h, rid, gmat, gmatb, hist_buffer_.GetInitializedHist(tid, nid_in_set), false);
   });
-
-  node_count = 0;
-  for (auto const& entry : nodes_for_explicit_hist_build_) {
-    int nid = entry.nid;
-    hist_buffer_.ReduceHist(hist_[nid], node_count, 0, gmat.cut.Ptrs().back());
-    node_count++;
-  }
 
   builder_monitor_.Stop("BuildLocalHistograms");
 }
@@ -265,7 +282,7 @@ void QuantileHistMaker::Builder::ExpandWithDepthWise(
 
     BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree, gpair_h);
 
-    SyncHistograms(starting_index, sync_count, p_tree);
+    SyncHistograms(starting_index, sync_count, gmat, p_tree);
     BuildNodeStats(gmat, p_fmat, p_tree, gpair_h);
     EvaluateSplits(gmat, column_matrix, p_fmat, p_tree, &num_leaves, depth, &timestamp,
                    &temp_qexpand_depth);
