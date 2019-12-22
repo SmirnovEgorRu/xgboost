@@ -371,7 +371,6 @@ class HistCollection {
   void Init(uint32_t nbins) {
     nbins_ = nbins;
     row_ptr_.clear();
-    data_.clear();
   }
 
   // create an empty histogram for i-th node
@@ -382,19 +381,36 @@ class HistCollection {
     }
     CHECK_EQ(row_ptr_[nid], kMax);
 
-    row_ptr_[nid] = data_.size();
-    data_.resize(data_.size() + nbins_);
+    max_nid = std::max(max_nid, nid);
+
+
+    row_ptr_[nid] = nbins_ * nid;
+    if ((max_nid + 1) * nbins_ > data_.size()) {
+      data_.resize((max_nid + 1) * nbins_);
+    }
+    InitilizeHist((*this)[nid]);
+  }
+
+  static void InitilizeHist(GHistRow hist) {
+    //TODO: can be optimized
+    for(auto& val : hist) {
+      val = tree::GradStats(0.0, 0.0);
+    }
   }
 
  private:
   /*! \brief number of all bins over all features */
   uint32_t nbins_;
 
+  bst_uint max_nid = 0;
+
   std::vector<tree::GradStats> data_;
 
   /*! \brief row_ptr_[nid] locates bin for historgram of node nid */
   std::vector<size_t> row_ptr_;
 };
+
+
 
 /*!
  * \brief Stores temporary histograms to compute them in parallel
@@ -431,7 +447,7 @@ class HistBuffer {
     GHistRow hist = hist_[tid * nodes_ + nid];
 
     if (!hist_was_used_[tid * nodes_ + nid]) {
-      InitilizeHist(hist);
+      HistCollection::InitilizeHist(hist);
       hist_was_used_[tid * nodes_ + nid] = true;
     }
 
@@ -441,6 +457,7 @@ class HistBuffer {
   // Reduce following bins (begin, end] for nid-node in dst across threads
   void ReduceHist(GHistRow dst, size_t nid, size_t begin, size_t end) {
     //TODO: add checks
+
     for(size_t tid = 0; tid < nthreads_; ++tid) {
       if (hist_was_used_[tid * nodes_ + nid]) {
         GHistRow srs = hist_[tid * nodes_ + nid];
@@ -454,12 +471,7 @@ class HistBuffer {
 
  protected:
   // fill hist by zeroes
-  void InitilizeHist(GHistRow hist) {
-    //TODO: can be optimized
-    for(auto& val : hist) {
-      val = tree::GradStats(0.0, 0.0);
-    }
-  }
+
   bool is_init_ = false;
   /*! \brief number of threads for parallel computation */
   size_t nthreads_ = 0;

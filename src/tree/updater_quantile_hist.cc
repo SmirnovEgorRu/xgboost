@@ -151,13 +151,14 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     node_count++;
   }
   (*sync_count) = node_count;
+  double t2 = dmlc::GetTime() * 1000;
 
   common::BlockedSpace2d space(nodes_for_explicit_hist_build_.size(), [&](size_t node) {
     const int32_t nid = nodes_for_explicit_hist_build_[node].nid;
     return row_set_collection_[nid].Size();
   }, 512);
 
-  double t2 = dmlc::GetTime() * 1000;
+  double t3 = dmlc::GetTime() * 1000;
   common::ParallelFor2d(space, [&](size_t nid_in_set, common::Range1d r) {
     const auto tid = static_cast<unsigned>(omp_get_thread_num());
     const int32_t nid = nodes_for_explicit_hist_build_[nid_in_set].nid;
@@ -168,15 +169,17 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
                                       nid);
     BuildHist(gpair_h, rid, gmat, gmatb, hist_buffer_.GetInitializedHist(tid, nid_in_set), false);
   });
-  double t3 = dmlc::GetTime() * 1000;
+  double t4 = dmlc::GetTime() * 1000;
 
   static double tt1 = 0;
   static double tt2 = 0;
+  static double tt3 = 0;
 
   tt1 += t2-t1;
   tt2 += t3-t2;
+  tt3 += t4-t3;
 
-  printf("BUILD: %8zu | %10.5f %10.5f | %10.5f %10.5f\n", nodes_for_explicit_hist_build_.size(), t2-t1, t3-t2, tt1, tt2);
+  printf("BUILD: %8zu | %10.5f %10.5f %10.5f | %10.5f %10.5f %10.5f\n", nodes_for_explicit_hist_build_.size(), t2-t1, t3-t2, t4-t3, tt1, tt2, tt3);
 
   builder_monitor_.Stop("BuildLocalHistograms");
 }

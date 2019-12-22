@@ -117,15 +117,15 @@ class BlockedSpace2d {
   }
 
  private:
-  void AddBlock(size_t first_dimension, size_t begin, size_t end) {
-    first_dimension_.push_back(first_dimension);
-    ranges_.emplace_back(begin, end);
-  }
+  // void AddBlock(size_t first_dimension, size_t begin, size_t end) {
+  //   first_dimension_.push_back(first_dimension);
+  //   ranges_.emplace_back(begin, end);
+  // }
 
-  std::vector<Range1d> ranges_;
-  std::vector<size_t> first_dimension_;
+  // std::vector<Range1d> ranges_;
+  // std::vector<size_t> first_dimension_;
   std::vector<size_t> bounds_;
-  std::vector<size_t> bounded_first_dim_;
+  // std::vector<size_t> bounded_first_dim_;
   std::vector<size_t> bounded_sized_dim_;
   size_t grain_size_;
 };
