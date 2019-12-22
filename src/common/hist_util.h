@@ -388,7 +388,7 @@ class HistCollection {
     if ((max_nid + 1) * nbins_ > data_.size()) {
       data_.resize((max_nid + 1) * nbins_);
     }
-    InitilizeHist((*this)[nid]);
+    // InitilizeHist((*this)[nid]);
   }
 
   static void InitilizeHist(GHistRow hist) {
@@ -457,7 +457,7 @@ class HistBuffer {
   // Reduce following bins (begin, end] for nid-node in dst across threads
   void ReduceHist(GHistRow dst, size_t nid, size_t begin, size_t end) {
     //TODO: add checks
-
+    HistCollection::InitilizeHist(dst);
     for(size_t tid = 0; tid < nthreads_; ++tid) {
       if (hist_was_used_[tid * nodes_ + nid]) {
         GHistRow srs = hist_[tid * nodes_ + nid];
