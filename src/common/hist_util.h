@@ -251,7 +251,7 @@ class DenseCuts  : public CutsBuilder {
 
 // FIXME(trivialfis): Merge this into generic cut builder.
 /*! \brief Builds the cut matrix on the GPU.
- *  
+ *
  *  \return The row stride across the entire dataset.
  */
 size_t DeviceSketch(int device,
@@ -348,6 +348,11 @@ class GHistIndexBlockMatrix {
 using GHistRow = Span<tree::GradStats>;
 
 /*!
+ * \brief fill a histogram by zeroes
+ */
+void InitilizeHistByZeroes(GHistRow hist);
+
+/*!
  * \brief histogram of gradient statistics for multiple nodes
  */
 class HistCollection {
@@ -369,9 +374,13 @@ class HistCollection {
 
   // initialize histogram collection
   void Init(uint32_t nbins) {
-    nbins_ = nbins;
+    if (nbins_ != nbins) {
+      nbins_ = nbins;
+      // quite expensive operation, so let's do this only once
+      data_.clear();
+    }
     row_ptr_.clear();
-    data_.clear();
+    n_nodes_added_ = 0;
   }
 
   // create an empty histogram for i-th node
@@ -382,18 +391,103 @@ class HistCollection {
     }
     CHECK_EQ(row_ptr_[nid], kMax);
 
-    row_ptr_[nid] = data_.size();
-    data_.resize(data_.size() + nbins_);
+    if (data_.size() <= nbins_ * (nid + 1)) {
+      data_.resize(nbins_ * (nid + 1));
+    }
+
+    row_ptr_[nid] = nbins_ * n_nodes_added_;
+    n_nodes_added_++;
   }
 
  private:
   /*! \brief number of all bins over all features */
-  uint32_t nbins_;
+  uint32_t nbins_ = 0;
+  /*! \brief amount of active nodes in hist collection */
+  uint32_t n_nodes_added_ = 0;
 
   std::vector<tree::GradStats> data_;
 
   /*! \brief row_ptr_[nid] locates bin for historgram of node nid */
   std::vector<size_t> row_ptr_;
+};
+
+/*!
+ * \brief Stores temporary histograms to compute them in parallel
+ * Supports processing multiple tree-nodes for nested parallelism
+ * Able to reduce histograms across threads in efficient way
+ */
+class ParallelGHistBuilder {
+ public:
+  void Init(size_t nbins) {
+    if (nbins != nbins_) {
+      hist_.Init(nbins);
+      max_size_ = 0;
+      nbins_ = nbins;
+    }
+  }
+
+  // Add new elements if needed, mark all hists as unused
+  void Reset(size_t nthreads, size_t nodes) {
+    const size_t new_size = nthreads * nodes;
+    for (size_t i = max_size_; i < new_size; ++i) {
+      hist_.AddHistRow(i);
+    }
+    max_size_ = std::max(max_size_, new_size);
+
+    nodes_ = nodes;
+    nthreads_ = nthreads;
+
+    hist_was_used_.resize(nthreads * nodes);
+    std::fill(hist_was_used_.begin(), hist_was_used_.end(), static_cast<int>(false));
+  }
+
+  // Get specified hist, initilize hist by zeroes if it wasn't used before
+  GHistRow GetInitializedHist(size_t tid, size_t nid) {
+    CHECK_LT(nid, nodes_);
+    CHECK_LT(tid, nthreads_);
+    GHistRow hist = hist_[tid * nodes_ + nid];
+
+    if (!hist_was_used_[tid * nodes_ + nid]) {
+      InitilizeHistByZeroes(hist);
+      hist_was_used_[tid * nodes_ + nid] = static_cast<int>(true);
+    }
+
+    return hist;
+  }
+
+  // Reduce following bins (begin, end] for nid-node in dst across threads
+  void ReduceHist(GHistRow dst, size_t nid, size_t begin, size_t end) {
+    CHECK_GT(end, begin);
+    CHECK_LT(nid, nodes_);
+
+    for (size_t tid = 0; tid < nthreads_; ++tid) {
+      if (hist_was_used_[tid * nodes_ + nid]) {
+        GHistRow src = hist_[tid * nodes_ + nid];
+
+        for (size_t i = begin; i < end; ++i) {
+          dst[i].Add(src[i]);
+        }
+      }
+    }
+  }
+
+ protected:
+  /*! \brief number of bins in each histogram */
+  size_t nbins_ = 0;
+  /*! \brief number of threads for parallel computation */
+  size_t nthreads_ = 0;
+  /*! \brief number of nodes which will be processed in parallel  */
+  size_t nodes_ = 0;
+  /*! \brief Real size of hist_ */
+  size_t max_size_ = 0;
+  /*! \brief number of nodes which will be processed in parallel  */
+  HistCollection hist_;
+  /*!
+   * \brief Marks which hists were used, it means that they should be merged.
+   * Contains only {true or false} values
+   * but 'int' is used instead of 'bool', because std::vector<bool> isn't thread safe
+   */
+  std::vector<int> hist_was_used_;
 };
 
 /*!
