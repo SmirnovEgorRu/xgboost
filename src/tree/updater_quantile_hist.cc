@@ -117,16 +117,13 @@ void QuantileHistMaker::Builder::SyncHistograms(
     const auto entry = nodes_for_explicit_hist_build_[node];
     auto this_hist = hist_[entry.nid];
     // Merging histograms from each thread into once
-    common::InitilizeHistByZeroes({this_hist.data() + r.begin(), this_hist.data() + r.end()});
     hist_buffer_.ReduceHist(this_hist, node, r.begin(), r.end());
 
     if (!(*p_tree)[entry.nid].IsRoot() && entry.sibling_nid > -1 && !isDistributed) {
       auto parent_hist = hist_[(*p_tree)[entry.nid].Parent()];
       auto sibling_hist = hist_[entry.sibling_nid];
 
-      for (bst_omp_uint bin_id = r.begin(); bin_id < r.end(); bin_id++) {
-        sibling_hist[bin_id].SetSubstract(parent_hist[bin_id], this_hist[bin_id]);
-      }
+      SubtractionHist(sibling_hist, parent_hist, this_hist, r.begin(), r.end());
     }
   });
 
@@ -173,10 +170,8 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     RegTree *p_tree,
     const std::vector<GradientPair> &gpair_h) {
   builder_monitor_.Start("BuildLocalHistograms");
-
-  hist_buffer_.Reset(this->nthread_, nodes_for_explicit_hist_build_.size());
-
   builder_monitor_.Start("AddHistRow");
+
   for (auto const& entry : nodes_for_explicit_hist_build_) {
     int nid = entry.nid;
     hist_.AddHistRow(nid);
@@ -191,6 +186,8 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     const int32_t nid = nodes_for_explicit_hist_build_[node].nid;
     return row_set_collection_[nid].Size();
   }, 256);
+
+  hist_buffer_.Reset(this->nthread_, nodes_for_explicit_hist_build_.size(), space);
 
   // Parallel processing by nodes and data in each node
   common::ParallelFor2d(space, this->nthread_, [&](size_t nid_in_set, common::Range1d r) {
@@ -677,6 +674,7 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
   std::vector<FeatureSetType> features_sets(n_nodes_in_set);
   best_split_tloc_.resize(nthread * n_nodes_in_set);
 
+  builder_monitor_.Start("EvaluateSplit::GetFeatureSet");
   // Generate feature set for each tree node
   for (size_t nid_in_set = 0; nid_in_set < n_nodes_in_set; ++nid_in_set) {
     const int32_t nid = nodes_set[nid_in_set].nid;
@@ -686,6 +684,7 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
       best_split_tloc_[nthread*nid_in_set + tid] = snode_[nid].best;
     }
   }
+  builder_monitor_.Stop("EvaluateSplit::GetFeatureSet");
 
   // Create 2D space (# of nodes to process x # of features to process)
   // to process them in parallel

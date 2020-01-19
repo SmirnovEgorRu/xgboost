@@ -29,12 +29,12 @@ TEST(ParallelGHistBuilder, Reset) {
 
   ParallelGHistBuilder hist_builder;
   hist_builder.Init(kBins);
-  hist_builder.Reset(nthreads, kNodes);
 
-  #pragma omp parallel for
-  for (int i = 0; i < kNodes * kTasksPerNode; i++) {
-    const size_t inode = i / kTasksPerNode;
-    const size_t itask = i % kTasksPerNode;
+  common::BlockedSpace2d space(kNodes, [&](size_t node) { return kTasksPerNode; }, 1);
+  hist_builder.Reset(nthreads, kNodes, space);
+
+  common::ParallelFor2d(space, nthreads, [&](size_t inode, common::Range1d r) {
+    const size_t itask = r.begin();
     const size_t tid = omp_get_thread_num();
 
     GHistRow hist = hist_builder.GetInitializedHist(tid, inode);
@@ -42,10 +42,11 @@ TEST(ParallelGHistBuilder, Reset) {
     for(size_t j = 0; j < kBins; ++j) {
       hist[j].Add(kValue, kValue);
     }
-  }
+  });
 
+  common::BlockedSpace2d space2(kNodesExtended, [&](size_t node) { return kTasksPerNode; }, 1);
   // reset and extend buffer
-  hist_builder.Reset(nthreads, kNodesExtended);
+  hist_builder.Reset(nthreads, kNodesExtended, space2);
 
   for(size_t inode = 0; inode < kNodesExtended; inode++) {
     for(size_t tid = 0; tid < nthreads; tid++) {
@@ -69,20 +70,19 @@ TEST(ParallelGHistBuilder, ReduceHist) {
 
   ParallelGHistBuilder hist_builder;
   hist_builder.Init(kBins);
-  hist_builder.Reset(nthreads, kNodes);
+  common::BlockedSpace2d space(kNodes, [&](size_t node) { return kTasksPerNode; }, 1);
+  hist_builder.Reset(nthreads, kNodes, space);
 
   // Simple analog of BuildHist function, works in parallel for both tree-nodes and data in node
-  #pragma omp parallel for
-  for(int i = 0; i < kNodes * kTasksPerNode; i++) {
-    const size_t inode = i / kTasksPerNode;
-    const size_t itask = i % kTasksPerNode;
+  common::ParallelFor2d(space, nthreads, [&](size_t inode, common::Range1d r) {
+    const size_t itask = r.begin();
     const size_t tid = omp_get_thread_num();
 
     GHistRow hist = hist_builder.GetInitializedHist(tid, inode);
     for(size_t i = 0; i < kBins; ++i) {
       hist[i].Add(kValue, kValue);
     }
-  }
+  });
 
   HistCollection collection;
   collection.Init(kBins);

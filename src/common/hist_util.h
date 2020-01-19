@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "row_set.h"
+#include "threading_utils.h"
 #include "../tree/param.h"
 #include "./quantile.h"
 #include "./timer.h"
@@ -340,17 +341,33 @@ class GHistIndexBlockMatrix {
 };
 
 /*!
- * \brief histogram of graident statistics for a single node.
- *  Consists of multiple GradStats, each entry showing total graident statistics
+ * \brief histogram of gradient statistics for a single node.
+ *  Consists of multiple GradStats, each entry showing total gradient statistics
  *     for that particular bin
  *  Uses global bin id so as to represent all features simultaneously
  */
 using GHistRow = Span<tree::GradStats>;
 
 /*!
- * \brief fill a histogram by zeroes
+ * \brief fill a histogram by zeros
  */
 void InitilizeHistByZeroes(GHistRow hist);
+
+/*!
+ * \brief Increment hist as dst += add in range [begin, end)
+ */
+void IncrementHist(GHistRow dst, const GHistRow add, size_t begin, size_t end);
+
+/*!
+ * \brief Copy hist from src to dst in range [begin, end)
+ */
+void CopyHist(GHistRow dst, const GHistRow src, size_t begin, size_t end);
+
+/*!
+ * \brief Compute Subtraction: dst = src1 - src2 in range [begin, end)
+ */
+void SubtractionHist(GHistRow dst, const GHistRow src1, const GHistRow src2,
+                     size_t begin, size_t end);
 
 /*!
  * \brief histogram of gradient statistics for multiple nodes
@@ -427,8 +444,32 @@ class ParallelGHistBuilder {
   }
 
   // Add new elements if needed, mark all hists as unused
-  void Reset(size_t nthreads, size_t nodes) {
-    const size_t new_size = nthreads * nodes;
+  void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space) {
+    const size_t space_size = space.Size();
+    const size_t chunck_size = space_size / nthreads + !!(space_size % nthreads);
+
+    tids_used_for_each_node_.resize(nodes);
+    for (size_t nid = 0; nid < nodes; ++nid) {
+      tids_used_for_each_node_[nid].clear();
+    }
+    tid_nid_to_hist_.clear();
+
+    size_t new_size = 0;
+    for (size_t tid = 0; tid < nthreads; ++tid) {
+      size_t begin = chunck_size * tid;
+      size_t end   = std::min(begin + chunck_size, space_size);
+
+      if (begin < space_size && end <= space_size) {
+        size_t nid_begin = space.GetFirstDimension(begin);
+        size_t nid_end   = space.GetFirstDimension(end-1);
+
+        for(size_t nid = nid_begin; nid <= nid_end; ++nid) {
+          tids_used_for_each_node_[nid].push_back(tid);
+          tid_nid_to_hist_[{tid, nid}] = new_size++;
+        }
+      }
+    }
+
     for (size_t i = max_size_; i < new_size; ++i) {
       hist_.AddHistRow(i);
     }
@@ -441,11 +482,14 @@ class ParallelGHistBuilder {
     std::fill(hist_was_used_.begin(), hist_was_used_.end(), static_cast<int>(false));
   }
 
-  // Get specified hist, initilize hist by zeroes if it wasn't used before
+  // Get specified hist, initialize hist by zeros if it wasn't used before
   GHistRow GetInitializedHist(size_t tid, size_t nid) {
     CHECK_LT(nid, nodes_);
     CHECK_LT(tid, nthreads_);
-    GHistRow hist = hist_[tid * nodes_ + nid];
+
+    size_t idx = tid_nid_to_hist_[{tid,nid}];
+    CHECK(hist_.RowExists(idx));
+    GHistRow hist = hist_[idx];
 
     if (!hist_was_used_[tid * nodes_ + nid]) {
       InitilizeHistByZeroes(hist);
@@ -460,15 +504,22 @@ class ParallelGHistBuilder {
     CHECK_GT(end, begin);
     CHECK_LT(nid, nodes_);
 
+    bool initilized = false;
     for (size_t tid = 0; tid < nthreads_; ++tid) {
       if (hist_was_used_[tid * nodes_ + nid]) {
-        GHistRow src = hist_[tid * nodes_ + nid];
+        size_t idx = tid_nid_to_hist_[{tid,nid}];
+        CHECK(hist_.RowExists(idx));
+        GHistRow src = hist_[idx];
 
-        for (size_t i = begin; i < end; ++i) {
-          dst[i].Add(src[i]);
+        if (!initilized) {
+          CopyHist(dst, src, begin, end);
+          initilized = true;
+        } else {
+          IncrementHist(dst, src, begin, end);
         }
       }
     }
+    CHECK(initilized);
   }
 
  protected:
@@ -488,6 +539,9 @@ class ParallelGHistBuilder {
    * but 'int' is used instead of 'bool', because std::vector<bool> isn't thread safe
    */
   std::vector<int> hist_was_used_;
+  // std::vector<GHistRow> hist_memory_;
+  std::vector<std::vector<size_t>> tids_used_for_each_node_;
+  std::map<std::pair<size_t, size_t>, size_t> tid_nid_to_hist_;
 };
 
 /*!
@@ -499,7 +553,6 @@ class GHistBuilder {
   inline void Init(size_t nthread, uint32_t nbins) {
     nthread_ = nthread;
     nbins_ = nbins;
-    thread_init_.resize(nthread_);
   }
 
   // construct a histogram via histogram aggregation
@@ -524,8 +577,6 @@ class GHistBuilder {
   size_t nthread_;
   /*! \brief number of all bins over all features */
   uint32_t nbins_;
-  std::vector<size_t> thread_init_;
-  std::vector<tree::GradStats> data_;
 };
 
 

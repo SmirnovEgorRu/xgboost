@@ -666,6 +666,48 @@ void InitilizeHistByZeroes(GHistRow hist) {
   memset(hist.data(), '\0', hist.size()*sizeof(tree::GradStats));
 }
 
+/*!
+ * \brief Increment hist as dst += add in range [begin, end)
+ */
+void IncrementHist(GHistRow dst, const GHistRow add, size_t begin, size_t end) {
+  using FPType = decltype(tree::GradStats::sum_grad);
+  FPType* pdst = reinterpret_cast<FPType*>(dst.data());
+  const FPType* padd = reinterpret_cast<const FPType*>(add.data());
+
+  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+    pdst[i] += padd[i];
+  }
+}
+
+/*!
+ * \brief Copy hist from src to dst in range [begin, end)
+ */
+void CopyHist(GHistRow dst, const GHistRow src, size_t begin, size_t end) {
+  using FPType = decltype(tree::GradStats::sum_grad);
+  FPType* pdst = reinterpret_cast<FPType*>(dst.data());
+  const FPType* psrc = reinterpret_cast<const FPType*>(src.data());
+
+  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+    pdst[i] = psrc[i];
+  }
+}
+
+/*!
+ * \brief Compute Subtraction: dst = src1 - src2 in range [begin, end)
+ */
+void SubtractionHist(GHistRow dst, const GHistRow src1, const GHistRow src2,
+                     size_t begin, size_t end) {
+  using FPType = decltype(tree::GradStats::sum_grad);
+  FPType* pdst = reinterpret_cast<FPType*>(dst.data());
+  const FPType* psrc1 = reinterpret_cast<const FPType*>(src1.data());
+  const FPType* psrc2 = reinterpret_cast<const FPType*>(src2.data());
+
+  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+    pdst[i] = psrc1[i] - psrc2[i];
+  }
+}
+
+
 void GHistBuilder::BuildHist(const std::vector<GradientPair>& gpair,
                              const RowSetCollection::Elem row_indices,
                              const GHistIndexMatrix& gmat,
@@ -768,9 +810,7 @@ void GHistBuilder::SubtractionTrick(GHistRow self, GHistRow sibling, GHistRow pa
   for (omp_ulong iblock = 0; iblock < n_blocks; ++iblock) {
     const size_t ibegin = iblock*block_size;
     const size_t iend = (((iblock+1)*block_size > size) ? size : ibegin + block_size);
-    for (bst_omp_uint bin_id = ibegin; bin_id < iend; bin_id++) {
-      p_self[bin_id].SetSubstract(p_parent[bin_id], p_sibling[bin_id]);
-    }
+    SubtractionHist(self, parent, sibling, ibegin, iend);
   }
 }
 
