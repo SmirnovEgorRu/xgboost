@@ -183,19 +183,21 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     const std::vector<GradientPair> &gpair_h) {
   builder_monitor_.Start("BuildLocalHistograms");
 
+  const size_t n_nodes = nodes_for_explicit_hist_build_.size();
+
   // create space of size (# rows in each node)
-  common::BlockedSpace2d space(nodes_for_explicit_hist_build_.size(), [&](size_t node) {
+  common::BlockedSpace2d space(n_nodes, [&](size_t node) {
     const int32_t nid = nodes_for_explicit_hist_build_[node].nid;
     return row_set_collection_[nid].Size();
   }, 256);
 
-  hist_buffer_.Reset(this->nthread_,
-                     nodes_for_explicit_hist_build_.size(),
-                     space,
-                     [&](size_t nid_in_set) {
-                       int32_t nid = nodes_for_explicit_hist_build_[nid_in_set].nid;
-                       return hist_[nid];
-                     });
+  std::vector<GHistRow> target_hists(n_nodes);
+  for (size_t i = 0; i < n_nodes; ++i) {
+    const int32_t nid = nodes_for_explicit_hist_build_[i].nid;
+    target_hists[i] = hist_[nid];
+  }
+
+  hist_buffer_.Reset(this->nthread_, n_nodes, space, target_hists);
 
   // Parallel processing by nodes and data in each node
   common::ParallelFor2d(space, this->nthread_, [&](size_t nid_in_set, common::Range1d r) {
@@ -675,11 +677,6 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
                                                const DMatrix& fmat,
                                                const RegTree& tree) {
   builder_monitor_.Start("EvaluateSplit");
-
-  static double tt1 = 0;
-  static double tt2 = 0;
-  static double tt3 = 0;
-  static double tt4 = 0;
 
   const size_t n_nodes_in_set = nodes_set.size();
   const auto nthread = static_cast<bst_omp_uint>(this->nthread_);

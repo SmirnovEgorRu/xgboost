@@ -19,6 +19,7 @@ size_t GetNThreads() {
   return nthreads;
 }
 
+
 TEST(ParallelGHistBuilder, Reset) {
   constexpr size_t kBins = 10;
   constexpr size_t kNodes = 5;
@@ -36,9 +37,13 @@ TEST(ParallelGHistBuilder, Reset) {
 
   ParallelGHistBuilder hist_builder;
   hist_builder.Init(kBins);
+  std::vector<GHistRow> target_hist(kNodes);
+  for(size_t i = 0; i < target_hist.size(); ++i) {
+    target_hist[i] = collection[i];
+  }
 
   common::BlockedSpace2d space(kNodes, [&](size_t node) { return kTasksPerNode; }, 1);
-  hist_builder.Reset(nthreads, kNodes, space, [&](size_t node) { return collection[node]; });
+  hist_builder.Reset(nthreads, kNodes, space, target_hist);
 
   common::ParallelFor2d(space, nthreads, [&](size_t inode, common::Range1d r) {
     const size_t itask = r.begin();
@@ -52,10 +57,12 @@ TEST(ParallelGHistBuilder, Reset) {
   });
 
   // reset and extend buffer
+  target_hist.resize(kNodesExtended);
+  for(size_t i = 0; i < target_hist.size(); ++i) {
+    target_hist[i] = collection[i];
+  }
   common::BlockedSpace2d space2(kNodesExtended, [&](size_t node) { return kTasksPerNode; }, 1);
-  hist_builder.Reset(nthreads, kNodesExtended, space2,
-      [&](size_t node) { return collection[node]; });
-
+  hist_builder.Reset(nthreads, kNodesExtended, space2, target_hist);
 
   common::ParallelFor2d(space2, nthreads, [&](size_t inode, common::Range1d r) {
     const size_t itask = r.begin();
@@ -87,8 +94,13 @@ TEST(ParallelGHistBuilder, ReduceHist) {
 
   ParallelGHistBuilder hist_builder;
   hist_builder.Init(kBins);
+  std::vector<GHistRow> target_hist(kNodes);
+  for(size_t i = 0; i < target_hist.size(); ++i) {
+    target_hist[i] = collection[i];
+  }
+
   common::BlockedSpace2d space(kNodes, [&](size_t node) { return kTasksPerNode; }, 1);
-  hist_builder.Reset(nthreads, kNodes, space, [&](size_t node) { return collection[node]; });
+  hist_builder.Reset(nthreads, kNodes, space, target_hist);
 
   // Simple analog of BuildHist function, works in parallel for both tree-nodes and data in node
   common::ParallelFor2d(space, nthreads, [&](size_t inode, common::Range1d r) {
