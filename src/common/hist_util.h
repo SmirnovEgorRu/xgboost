@@ -443,75 +443,22 @@ class ParallelGHistBuilder {
   }
 
   // Add new elements if needed, mark all hists as unused
-  // TODO: comments for arguments
-  void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space, const std::vector<GHistRow>& target_hists) {
+  // targeted_hists - already allocated hists which should contain final results after Reduce() call
+  void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space, const std::vector<GHistRow>& targeted_hists) {
     hist_buffer_.Init(nbins_);
     tid_nid_to_hist_.clear();
     hist_memory_.clear();
-    is_external_hist_.clear();
+    threads_to_nids_map_.clear();
+    targeted_hists_ = targeted_hists;
 
-    CHECK_EQ(nodes, target_hists.size());
+    CHECK_EQ(nodes, targeted_hists.size());
 
     nodes_    = nodes;
     nthreads_ = nthreads;
 
-    const size_t space_size = space.Size();
-    const size_t chunck_size = space_size / nthreads + !!(space_size % nthreads);
-
-    std::vector<bool> mapping(nthreads * nodes_, false);
-
-    for (size_t tid = 0; tid < nthreads; ++tid) {
-      size_t begin = chunck_size * tid;
-      size_t end   = std::min(begin + chunck_size, space_size);
-
-      if (begin < space_size) {
-        size_t nid_begin = space.GetFirstDimension(begin);
-        size_t nid_end   = space.GetFirstDimension(end-1);
-
-        for(size_t nid = nid_begin; nid <= nid_end; ++nid) {
-          mapping[tid * nodes_ + nid] = true;
-        }
-      }
-    }
-
-    size_t hist_total = 0;
-    size_t hist_allocated_additionally = 0;
-
-    for (size_t nid = 0; nid < nodes_; ++nid) {
-      bool is_init = false;
-      for (size_t tid = 0; tid < nthreads; ++tid) {
-        if (mapping[tid * nodes_ + nid]) {
-          if (!is_init) {
-            is_init = true;
-          } else {
-            hist_buffer_.AddHistRow(hist_allocated_additionally);
-            hist_allocated_additionally++;
-          }
-        }
-      }
-    }
-
-    hist_allocated_additionally = 0;
-    for (size_t nid = 0; nid < nodes_; ++nid) {
-      bool is_init = false;
-      for (size_t tid = 0; tid < nthreads; ++tid) {
-        if (mapping[tid * nodes_ + nid]) {
-          if (!is_init) {
-            GHistRow external_hist = target_hists[nid];
-            hist_memory_.push_back(external_hist);
-            is_external_hist_.push_back(true);
-            is_init = true;
-          } else {
-            hist_memory_.push_back(hist_buffer_[hist_allocated_additionally]);
-            hist_allocated_additionally++;
-            is_external_hist_.push_back(false);
-          }
-          tid_nid_to_hist_[{tid, nid}] = hist_total++;
-          CHECK_EQ(hist_total, hist_memory_.size());
-          CHECK_EQ(hist_total, is_external_hist_.size());
-        }
-      }
-    }
+    MatchThreadsToNodes(space);
+    AllocateAdditionalHistograms();
+    MatchNodeNidPairToHist();
 
     hist_was_used_.resize(nthreads * nodes_);
     std::fill(hist_was_used_.begin(), hist_was_used_.end(), static_cast<int>(false));
@@ -538,27 +485,89 @@ class ParallelGHistBuilder {
     CHECK_GT(end, begin);
     CHECK_LT(nid, nodes_);
 
-    GHistRow dst;
-    bool is_init = false;
+    GHistRow dst = targeted_hists_[nid];
+
     for (size_t tid = 0; tid < nthreads_; ++tid) {
       if (hist_was_used_[tid * nodes_ + nid]) {
-        CHECK_EQ(tid_nid_to_hist_.count({tid,nid}), 1);
         const size_t idx = tid_nid_to_hist_.at({tid,nid});
-
         GHistRow src = hist_memory_[idx];
-        if (is_external_hist_[idx]) {
-          CHECK_EQ(is_init, false);
-          dst = src;
-          is_init = true;
-        } else {
-          CHECK_EQ(is_init, true);
+
+        if (dst.data() != src.data()) {
           IncrementHist(dst, src, begin, end);
-        }
+        }  // else src is already targeted hist
       }
     }
   }
 
  protected:
+  void MatchThreadsToNodes(const BlockedSpace2d& space) {
+    const size_t space_size = space.Size();
+    const size_t chunck_size = space_size / nthreads_ + !!(space_size % nthreads_);
+
+    threads_to_nids_map_.resize(nthreads_ * nodes_, false);
+
+    for (size_t tid = 0; tid < nthreads_; ++tid) {
+      size_t begin = chunck_size * tid;
+      size_t end   = std::min(begin + chunck_size, space_size);
+
+      if (begin < space_size) {
+        size_t nid_begin = space.GetFirstDimension(begin);
+        size_t nid_end   = space.GetFirstDimension(end-1);
+
+        for(size_t nid = nid_begin; nid <= nid_end; ++nid) {
+          // true - means thread 'tid' will work to compute partial hist for node 'nid'
+          threads_to_nids_map_[tid * nodes_ + nid] = true;
+        }
+      }
+    }
+  }
+
+  void AllocateAdditionalHistograms(){
+    size_t hist_allocated_additionally = 0;
+
+    for (size_t nid = 0; nid < nodes_; ++nid) {
+      size_t nthreads_for_nid = 0;
+
+      for (size_t tid = 0; tid < nthreads_; ++tid) {
+        if (threads_to_nids_map_[tid * nodes_ + nid]) {
+          nthreads_for_nid++;
+        }
+      }
+
+      CHECK_GT(nthreads_for_nid, 0);
+      // -1 means that we have one histogram per node already allocated externally,
+      // which should store final result for the node
+      hist_allocated_additionally += (nthreads_for_nid - 1);
+    }
+
+    for (size_t i = 0; i < hist_allocated_additionally; ++i) {
+      hist_buffer_.AddHistRow(i);
+    }
+  }
+
+  void MatchNodeNidPairToHist(){
+    size_t hist_total = 0;
+    size_t hist_allocated_additionally = 0;
+
+    for (size_t nid = 0; nid < nodes_; ++nid) {
+      bool first_hist = true;
+      for (size_t tid = 0; tid < nthreads_; ++tid) {
+        if (threads_to_nids_map_[tid * nodes_ + nid]) {
+          if (first_hist) {
+            hist_memory_.push_back(targeted_hists_[nid]);
+            first_hist = false;
+          } else {
+            hist_memory_.push_back(hist_buffer_[hist_allocated_additionally]);
+            hist_allocated_additionally++;
+          }
+          // map pair {tid, nid} to index of allocated histogram from hist_memory_
+          tid_nid_to_hist_[{tid, nid}] = hist_total++;
+          CHECK_EQ(hist_total, hist_memory_.size());
+        }
+      }
+    }
+  }
+
   /*! \brief number of bins in each histogram */
   size_t nbins_ = 0;
   /*! \brief number of threads for parallel computation */
@@ -573,10 +582,14 @@ class ParallelGHistBuilder {
    * but 'int' is used instead of 'bool', because std::vector<bool> isn't thread safe
    */
   std::vector<int> hist_was_used_;
-  std::vector<bool> is_external_hist_;
 
+  /*! \brief Buffer for additional histograms for Parallel processing  */
+  std::vector<bool> threads_to_nids_map_;
+  /*! \brief Contains histograms for final results  */
+  std::vector<GHistRow> targeted_hists_;
+  /*! \brief Allocated memory for histograms used for construction  */
   std::vector<GHistRow> hist_memory_;
-  // TODO
+  /*! \brief map pair {tid, nid} to index of allocated histogram from hist_memory_  */
   std::map<std::pair<size_t, size_t>, size_t> tid_nid_to_hist_;
 };
 

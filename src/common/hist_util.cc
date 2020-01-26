@@ -795,10 +795,6 @@ void GHistBuilder::BuildBlockHist(const std::vector<GradientPair>& gpair,
 }
 
 void GHistBuilder::SubtractionTrick(GHistRow self, GHistRow sibling, GHistRow parent) {
-  tree::GradStats* p_self = self.data();
-  tree::GradStats* p_sibling = sibling.data();
-  tree::GradStats* p_parent = parent.data();
-
   const size_t size = self.size();
   CHECK_EQ(sibling.size(), size);
   CHECK_EQ(parent.size(), size);
