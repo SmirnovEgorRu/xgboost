@@ -102,11 +102,6 @@ void QuantileHistMaker::Builder::SyncHistograms(
   builder_monitor_.Start("SyncHistograms");
 
   const bool isDistributed = rabit::IsDistributed();
-  builder_monitor_.Start("AddHistRow");
-  for (auto const& node : nodes_for_subtraction_trick_) {
-    hist_.AddHistRow(node.nid);
-  }
-  builder_monitor_.Stop("AddHistRow");
 
   const size_t nbins = hist_builder_.GetNumBins();
   common::BlockedSpace2d space(nodes_for_explicit_hist_build_.size(), [&](size_t node) {
@@ -117,7 +112,7 @@ void QuantileHistMaker::Builder::SyncHistograms(
     const auto entry = nodes_for_explicit_hist_build_[node];
     auto this_hist = hist_[entry.nid];
     // Merging histograms from each thread into once
-    hist_buffer_.ReduceHist(this_hist, node, r.begin(), r.end());
+    hist_buffer_.ReduceHist(node, r.begin(), r.end());
 
     if (!(*p_tree)[entry.nid].IsRoot() && entry.sibling_nid > -1 && !isDistributed) {
       auto parent_hist = hist_[(*p_tree)[entry.nid].Parent()];
@@ -149,28 +144,22 @@ void QuantileHistMaker::Builder::BuildHistogramsLossGuide(
   nodes_for_subtraction_trick_.clear();
   nodes_for_explicit_hist_build_.push_back(entry);
 
-  int starting_index = std::numeric_limits<int>::max();
-  int sync_count = 0;
-
-  BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree, gpair_h);
-
-  // Subtraction Trick
   if (entry.sibling_nid > -1) {
     nodes_for_subtraction_trick_.emplace_back(entry.sibling_nid, entry.nid,
         p_tree->GetDepth(entry.sibling_nid), 0.0f, 0);
   }
+
+  int starting_index = std::numeric_limits<int>::max();
+  int sync_count = 0;
+
+  AddHistRows(&starting_index, &sync_count);
+  BuildLocalHistograms(gmat, gmatb, p_tree, gpair_h);
   SyncHistograms(starting_index, sync_count, p_tree);
 }
 
-void QuantileHistMaker::Builder::BuildLocalHistograms(
-    int *starting_index,
-    int *sync_count,
-    const GHistIndexMatrix &gmat,
-    const GHistIndexBlockMatrix &gmatb,
-    RegTree *p_tree,
-    const std::vector<GradientPair> &gpair_h) {
-  builder_monitor_.Start("BuildLocalHistograms");
-  builder_monitor_.Start("AddHistRow");
+
+void QuantileHistMaker::Builder::AddHistRows(int *starting_index, int *sync_count) {
+  builder_monitor_.Start("AddHistRows");
 
   for (auto const& entry : nodes_for_explicit_hist_build_) {
     int nid = entry.nid;
@@ -179,7 +168,20 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
   }
   (*sync_count) = nodes_for_explicit_hist_build_.size();
 
-  builder_monitor_.Stop("AddHistRow");
+  for (auto const& node : nodes_for_subtraction_trick_) {
+    hist_.AddHistRow(node.nid);
+  }
+
+  builder_monitor_.Stop("AddHistRows");
+};
+
+
+void QuantileHistMaker::Builder::BuildLocalHistograms(
+    const GHistIndexMatrix &gmat,
+    const GHistIndexBlockMatrix &gmatb,
+    RegTree *p_tree,
+    const std::vector<GradientPair> &gpair_h) {
+  builder_monitor_.Start("BuildLocalHistograms");
 
   // create space of size (# rows in each node)
   common::BlockedSpace2d space(nodes_for_explicit_hist_build_.size(), [&](size_t node) {
@@ -187,7 +189,13 @@ void QuantileHistMaker::Builder::BuildLocalHistograms(
     return row_set_collection_[nid].Size();
   }, 256);
 
-  hist_buffer_.Reset(this->nthread_, nodes_for_explicit_hist_build_.size(), space);
+  hist_buffer_.Reset(this->nthread_,
+                     nodes_for_explicit_hist_build_.size(),
+                     space,
+                     [&](size_t nid_in_set) {
+                       int32_t nid = nodes_for_explicit_hist_build_[nid_in_set].nid;
+                       return hist_[nid];
+                     });
 
   // Parallel processing by nodes and data in each node
   common::ParallelFor2d(space, this->nthread_, [&](size_t nid_in_set, common::Range1d r) {
@@ -319,10 +327,11 @@ void QuantileHistMaker::Builder::ExpandWithDepthWise(
 
     SplitSiblings(qexpand_depth_wise_, &nodes_for_explicit_hist_build_,
                   &nodes_for_subtraction_trick_, p_tree);
+    AddHistRows(&starting_index, &sync_count);
 
-    BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree, gpair_h);
-
+    BuildLocalHistograms(gmat, gmatb, p_tree, gpair_h);
     SyncHistograms(starting_index, sync_count, p_tree);
+
     BuildNodeStats(gmat, p_fmat, p_tree, gpair_h);
     EvaluateSplits(gmat, column_matrix, p_fmat, p_tree, &num_leaves, depth, &timestamp,
                    &temp_qexpand_depth);
