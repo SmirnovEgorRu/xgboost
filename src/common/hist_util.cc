@@ -674,7 +674,7 @@ void IncrementHist(GHistRow dst, const GHistRow add, size_t begin, size_t end) {
   FPType* pdst = reinterpret_cast<FPType*>(dst.data());
   const FPType* padd = reinterpret_cast<const FPType*>(add.data());
 
-  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+  for (size_t i = 2 * begin; i < 2 * end; ++i) {
     pdst[i] += padd[i];
   }
 }
@@ -687,7 +687,7 @@ void CopyHist(GHistRow dst, const GHistRow src, size_t begin, size_t end) {
   FPType* pdst = reinterpret_cast<FPType*>(dst.data());
   const FPType* psrc = reinterpret_cast<const FPType*>(src.data());
 
-  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+  for (size_t i = 2 * begin; i < 2 * end; ++i) {
     pdst[i] = psrc[i];
   }
 }
@@ -702,7 +702,7 @@ void SubtractionHist(GHistRow dst, const GHistRow src1, const GHistRow src2,
   const FPType* psrc1 = reinterpret_cast<const FPType*>(src1.data());
   const FPType* psrc2 = reinterpret_cast<const FPType*>(src2.data());
 
-  for(size_t i = 2 * begin; i < 2 * end; ++i) {
+  for (size_t i = 2 * begin; i < 2 * end; ++i) {
     pdst[i] = psrc1[i] - psrc2[i];
   }
 }

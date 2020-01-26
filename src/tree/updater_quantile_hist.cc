@@ -2,7 +2,7 @@
  * Copyright 2017-2018 by Contributors
  * \file updater_quantile_hist.cc
  * \brief use quantized feature values to construct a tree
- * \author Philip Cho, Tianqi Checn
+ * \author Philip Cho, Tianqi Checn, Egor Smirnov
  */
 #include <dmlc/timer.h>
 #include <rabit/rabit.h>
@@ -173,7 +173,7 @@ void QuantileHistMaker::Builder::AddHistRows(int *starting_index, int *sync_coun
   }
 
   builder_monitor_.Stop("AddHistRows");
-};
+}
 
 
 void QuantileHistMaker::Builder::BuildLocalHistograms(

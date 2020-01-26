@@ -2,7 +2,7 @@
  * Copyright 2017-2018 by Contributors
  * \file updater_quantile_hist.h
  * \brief use quantized feature values to construct a tree
- * \author Philip Cho, Tianqi Chen
+ * \author Philip Cho, Tianqi Chen, Egor Smirnov
  */
 #ifndef XGBOOST_TREE_UPDATER_QUANTILE_HIST_H_
 #define XGBOOST_TREE_UPDATER_QUANTILE_HIST_H_

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
+#include <map>
 
 #include "row_set.h"
 #include "threading_utils.h"
@@ -444,7 +445,8 @@ class ParallelGHistBuilder {
 
   // Add new elements if needed, mark all hists as unused
   // targeted_hists - already allocated hists which should contain final results after Reduce() call
-  void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space, const std::vector<GHistRow>& targeted_hists) {
+  void Reset(size_t nthreads, size_t nodes, const BlockedSpace2d& space,
+             const std::vector<GHistRow>& targeted_hists) {
     hist_buffer_.Init(nbins_);
     tid_nid_to_hist_.clear();
     hist_memory_.clear();
@@ -469,7 +471,7 @@ class ParallelGHistBuilder {
     CHECK_LT(nid, nodes_);
     CHECK_LT(tid, nthreads_);
 
-    size_t idx = tid_nid_to_hist_.at({tid,nid});
+    size_t idx = tid_nid_to_hist_.at({tid, nid});
     GHistRow hist = hist_memory_[idx];
 
     if (!hist_was_used_[tid * nodes_ + nid]) {
@@ -489,7 +491,7 @@ class ParallelGHistBuilder {
 
     for (size_t tid = 0; tid < nthreads_; ++tid) {
       if (hist_was_used_[tid * nodes_ + nid]) {
-        const size_t idx = tid_nid_to_hist_.at({tid,nid});
+        const size_t idx = tid_nid_to_hist_.at({tid, nid});
         GHistRow src = hist_memory_[idx];
 
         if (dst.data() != src.data()) {
@@ -514,7 +516,7 @@ class ParallelGHistBuilder {
         size_t nid_begin = space.GetFirstDimension(begin);
         size_t nid_end   = space.GetFirstDimension(end-1);
 
-        for(size_t nid = nid_begin; nid <= nid_end; ++nid) {
+        for (size_t nid = nid_begin; nid <= nid_end; ++nid) {
           // true - means thread 'tid' will work to compute partial hist for node 'nid'
           threads_to_nids_map_[tid * nodes_ + nid] = true;
         }
@@ -522,7 +524,7 @@ class ParallelGHistBuilder {
     }
   }
 
-  void AllocateAdditionalHistograms(){
+  void AllocateAdditionalHistograms() {
     size_t hist_allocated_additionally = 0;
 
     for (size_t nid = 0; nid < nodes_; ++nid) {
@@ -545,7 +547,7 @@ class ParallelGHistBuilder {
     }
   }
 
-  void MatchNodeNidPairToHist(){
+  void MatchNodeNidPairToHist() {
     size_t hist_total = 0;
     size_t hist_allocated_additionally = 0;
 
