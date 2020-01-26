@@ -408,7 +408,7 @@ class HistCollection {
     }
     CHECK_EQ(row_ptr_[nid], kMax);
 
-    if (data_.size() <= nbins_ * (nid + 1)) {
+    if (data_.size() < nbins_ * (nid + 1)) {
       data_.resize(nbins_ * (nid + 1));
     }
 

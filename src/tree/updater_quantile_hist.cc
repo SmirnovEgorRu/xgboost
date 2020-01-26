@@ -676,6 +676,11 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
                                                const RegTree& tree) {
   builder_monitor_.Start("EvaluateSplit");
 
+  static double tt1 = 0;
+  static double tt2 = 0;
+  static double tt3 = 0;
+  static double tt4 = 0;
+
   const size_t n_nodes_in_set = nodes_set.size();
   const auto nthread = static_cast<bst_omp_uint>(this->nthread_);
 
@@ -683,7 +688,6 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
   std::vector<FeatureSetType> features_sets(n_nodes_in_set);
   best_split_tloc_.resize(nthread * n_nodes_in_set);
 
-  builder_monitor_.Start("EvaluateSplit::GetFeatureSet");
   // Generate feature set for each tree node
   for (size_t nid_in_set = 0; nid_in_set < n_nodes_in_set; ++nid_in_set) {
     const int32_t nid = nodes_set[nid_in_set].nid;
@@ -693,13 +697,13 @@ void QuantileHistMaker::Builder::EvaluateSplit(const std::vector<ExpandEntry>& n
       best_split_tloc_[nthread*nid_in_set + tid] = snode_[nid].best;
     }
   }
-  builder_monitor_.Stop("EvaluateSplit::GetFeatureSet");
 
   // Create 2D space (# of nodes to process x # of features to process)
   // to process them in parallel
+  const size_t grain_size = std::max<size_t>(1, features_sets[0]->Size() / nthread);
   common::BlockedSpace2d space(n_nodes_in_set, [&](size_t nid_in_set) {
       return features_sets[nid_in_set]->Size();
-  }, 1);
+  }, grain_size);
 
   // Start parallel enumeration for all tree nodes in the set and all features
   common::ParallelFor2d(space, this->nthread_, [&](size_t nid_in_set, common::Range1d r) {
